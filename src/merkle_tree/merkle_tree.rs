@@ -1,12 +1,37 @@
-use crate::utils::index;
-use crate::{errors::errors::MerkleError, utils::index::left_child_index};
+use crate::errors::errors::MerkleError;
+use crate::utils::index::{left_child_index, parent_index};
 use hex;
+use num_bigint::BigUint;
+use num_traits::FromPrimitive;
 use sha3::{Digest, Sha3_256};
 pub struct MerkleTree {
-    nodes: Vec<[u8; 32]>,
+    nodes: Vec<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Direction {
+    Left,
+    Right,
+}
+
+pub struct ProofStep {
+    direction: Direction,
+    sibling: String,
 }
 
 impl MerkleTree {
+    pub fn root(&self) -> String {
+        return self.nodes[0].clone();
+    }
+
+    pub fn num_leaves(&self) -> usize {
+        return self.nodes.len() / 2 + 1;
+    }
+
+    fn is_left_child(&self, index: usize) -> bool {
+        index % 2 == 1
+    }
+
     pub fn new(depth: usize, initial_leaf: &str) -> Result<Self, MerkleError> {
         if depth > 30 {
             return Err(MerkleError::MaxDepthExceeded);
@@ -15,12 +40,7 @@ impl MerkleTree {
         //i.e. depth(20) == 0 to 19,
         let depth = depth - 1;
 
-        let string_to_decode;
-        if &initial_leaf[..2] == "0x" {
-            string_to_decode = &initial_leaf[2..];
-        } else {
-            string_to_decode = initial_leaf;
-        }
+        let string_to_decode = &initial_leaf[2..];
 
         if string_to_decode.len() != 64 {
             return Err(MerkleError::InvalidBytes);
@@ -28,9 +48,10 @@ impl MerkleTree {
 
         let leaf_count = 1 << depth;
         let total_nodes = 2 * leaf_count - 1;
-        let mut nodes = vec![[0u8; 32]; total_nodes];
+        let mut nodes = vec![String::with_capacity(64); total_nodes];
         let mut hasher = Sha3_256::new();
         let mut current_hash: [u8; 32];
+        let mut current_hash_string = String::from(initial_leaf);
 
         let initial_leaf_bytes;
         match hex::decode(string_to_decode) {
@@ -46,7 +67,7 @@ impl MerkleTree {
         };
 
         for i in (total_nodes - leaf_count)..total_nodes {
-            nodes[i] = current_hash;
+            nodes[i] = current_hash_string.clone();
         }
 
         // build up
@@ -56,11 +77,12 @@ impl MerkleTree {
             concatenated_hash[32..].copy_from_slice(&current_hash);
             hasher.update(&concatenated_hash);
             current_hash = hasher.finalize_reset().into();
+            current_hash_string = format!("0x{}", hex::encode(current_hash));
 
             let start_idx = (1 << d) - 1;
             let end_idx = (1 << (d + 1)) - 1;
             for i in start_idx..end_idx {
-                nodes[i] = current_hash;
+                nodes[i] = current_hash_string.clone();
             }
         }
 
@@ -75,50 +97,80 @@ impl MerkleTree {
 
         let array_index = self.nodes.len() - leaf_count + leaf_index;
 
-        let string_to_decode;
-        if &value[..2] == "0x" {
-            string_to_decode = &value[2..];
-        } else {
-            string_to_decode = value;
-        }
-
-        let new_leaf_bytes;
-        match hex::decode(string_to_decode) {
-            Ok(bytes) => {
-                new_leaf_bytes = bytes;
-            }
-            Err(e) => return Err(MerkleError::EncodeError(e)),
-        }
-
-        let current_leaf: [u8; 32];
-        current_leaf = match new_leaf_bytes.try_into() {
-            Ok(bytes) => bytes,
-            Err(_) => return Err(MerkleError::InvalidBytes),
-        };
-
-        self.nodes[array_index] = current_leaf;
+        self.nodes[array_index] = value.to_string();
 
         let mut hasher = Sha3_256::new();
-        let mut curr_index = index::parent_index(array_index);
+        let mut curr_index = parent_index(array_index);
         while let Some(index) = curr_index {
-            let mut concatenated_hash = [0u8; 64];
-            concatenated_hash[..32].copy_from_slice(&self.nodes[left_child_index(index)]);
-            concatenated_hash[32..].copy_from_slice(&self.nodes[left_child_index(index) + 1]);
+            let left_child_hash = hex::decode(&self.nodes[left_child_index(index)][2..])
+                .map_err(|e| MerkleError::EncodeError(e))?;
+            let right_child_hash = hex::decode(&self.nodes[left_child_index(index) + 1][2..])
+                .map_err(|e| MerkleError::EncodeError(e))?;
+
+            let mut concatenated_hash: Vec<u8> = Vec::new();
+            concatenated_hash.extend(&left_child_hash);
+            concatenated_hash.extend(&right_child_hash);
+
             hasher.update(&concatenated_hash);
-            self.nodes[index] = hasher.finalize_reset().into();
-            curr_index = index::parent_index(index);
-            println!("INDEX {}", index);
+            self.nodes[index] = format!("0x{}", hex::encode(hasher.finalize_reset()));
+            curr_index = parent_index(index);
         }
         Ok(())
     }
 
-    pub fn root(&self) -> String {
-        let root = hex::encode(&self.nodes[0]);
-        return format!("0x{}", root);
+    pub fn proof(&self, leaf_index: usize) -> Vec<ProofStep> {
+        let mut proof_steps = Vec::new();
+
+        let mut index = leaf_index + self.nodes.len() - self.num_leaves();
+        while let Some(parent_index) = parent_index(index) {
+            let sibling_index = if self.is_left_child(index) {
+                index + 1
+            } else {
+                index - 1
+            };
+
+            let step = ProofStep {
+                direction: if self.is_left_child(index) {
+                    Direction::Left
+                } else {
+                    Direction::Right
+                },
+                sibling: self.nodes[sibling_index].clone(),
+            };
+
+            proof_steps.push(step);
+
+            // Move up the tree
+            index = parent_index;
+        }
+        proof_steps
     }
 
-    pub fn num_leaves(&self) -> usize {
-        return self.nodes.len() / 2 + 1;
+    pub fn verify(proof: &Vec<ProofStep>, leaf_value: String) -> Result<String, MerkleError> {
+        let mut hasher = Sha3_256::new();
+        let mut current_value = leaf_value;
+
+        for step in proof.iter() {
+            let mut concatenated: Vec<u8> = Vec::new();
+            let sibling_hash =
+                hex::decode(&step.sibling[2..]).map_err(|e| MerkleError::EncodeError(e))?;
+            let current_hash =
+                hex::decode(&current_value[2..]).map_err(|e| MerkleError::EncodeError(e))?;
+            match step.direction {
+                Direction::Right => {
+                    concatenated.extend(&sibling_hash);
+                    concatenated.extend(&current_hash);
+                }
+                Direction::Left => {
+                    concatenated.extend(&current_hash);
+                    concatenated.extend(&sibling_hash);
+                }
+            }
+            hasher.update(concatenated);
+            current_value = format!("0x{}", hex::encode(hasher.finalize_reset()));
+        }
+
+        Ok(current_value)
     }
 }
 
@@ -138,14 +190,14 @@ fn test_merkle_tree_full() {
     let tree = MerkleTree::new(3, initial_leaf).unwrap();
     for i in 3..7 {
         assert_eq!(
-            hex::encode(tree.nodes[i]),
-            "abababababababababababababababababababababababababababababababab"
+            &tree.nodes[i],
+            "0xabababababababababababababababababababababababababababababababab"
         )
     }
     for i in 1..3 {
         assert_eq!(
-            hex::encode(tree.nodes[i]),
-            "699fc94ff1ec83f1abf531030e324003e7758298281645245f7c698425a5e0e7"
+            &tree.nodes[i],
+            "0x699fc94ff1ec83f1abf531030e324003e7758298281645245f7c698425a5e0e7"
         )
     }
     assert_eq!(
@@ -169,8 +221,8 @@ fn test_merkle_tree_set() {
     )
     .unwrap();
     assert_eq!(
-        hex::encode(tree.nodes[1]),
-        "abababababababababababababababababababababababababababababababcd"
+        &tree.nodes[1],
+        "0xabababababababababababababababababababababababababababababababcd"
     );
     assert_eq!(
         tree.root(),
@@ -193,4 +245,86 @@ fn test_merkle_tree_set_higher_depth() {
         tree.root(),
         "0xc795494aa662dd012c5de6c52f0ab28ee9135fe846074d62bb7807cf98742fd9"
     )
+}
+
+#[test]
+fn test_proof() {
+    let initial_leaf = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    let mut tree = MerkleTree::new(5, initial_leaf).unwrap();
+    let num_leaves = tree.num_leaves();
+
+    let multiplier = BigUint::parse_bytes(
+        b"1111111111111111111111111111111111111111111111111111111111111111",
+        16,
+    )
+    .expect("Failed to parse hex string to BigInt");
+
+    for i in 0..num_leaves {
+        let product = BigUint::from_usize(i).unwrap() * &multiplier;
+        let value = format!("0x{:064x}", product);
+        tree.set(i, &value).unwrap();
+    }
+
+    assert_eq!(
+        tree.root(),
+        "0x57054e43fa56333fd51343b09460d48b9204999c376624f52480c5593b91eff4"
+    );
+
+    let proof = tree.proof(3);
+
+    let expected_proof = vec![
+        ProofStep {
+            direction: Direction::Right,
+            sibling: "0x2222222222222222222222222222222222222222222222222222222222222222"
+                .to_string(),
+        },
+        ProofStep {
+            direction: Direction::Right,
+            sibling: "0x35e794f1b42c224a8e390ce37e141a8d74aa53e151c1d1b9a03f88c65adb9e10"
+                .to_string(),
+        },
+        ProofStep {
+            direction: Direction::Left,
+            sibling: "0x26fca7737f48fa702664c8b468e34c858e62f51762386bd0bddaa7050e0dd7c0"
+                .to_string(),
+        },
+        ProofStep {
+            direction: Direction::Left,
+            sibling: "0xe7e11a86a0c1d8d8624b1629cb58e39bb4d0364cb8cb33c4029662ab30336858"
+                .to_string(),
+        },
+    ];
+
+    assert_eq!(proof.len(), expected_proof.len());
+    for i in 0..proof.len() {
+        assert_eq!(proof[i].direction, expected_proof[i].direction);
+        assert_eq!(proof[i].sibling, expected_proof[i].sibling);
+    }
+}
+
+#[test]
+fn test_verify() {
+    let initial_leaf = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    let mut tree = MerkleTree::new(5, initial_leaf).unwrap();
+    let num_leaves = tree.num_leaves();
+
+    let multiplier = BigUint::parse_bytes(
+        b"1111111111111111111111111111111111111111111111111111111111111111",
+        16,
+    )
+    .expect("Failed to parse hex string to BigInt");
+
+    for i in 0..num_leaves {
+        let product = BigUint::from_usize(i).unwrap() * &multiplier;
+        let value = format!("0x{:064x}", product);
+        tree.set(i, &value).unwrap();
+    }
+
+    let leaf_5_bigint = multiplier * BigUint::from(5u32);
+    let leaf_5_string = format!("0x{:064x}", leaf_5_bigint);
+
+    let root = tree.root();
+    let proof = tree.proof(5);
+
+    assert_eq!(MerkleTree::verify(&proof, leaf_5_string).unwrap(), root);
 }
