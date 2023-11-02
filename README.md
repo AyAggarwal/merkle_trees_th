@@ -1,6 +1,6 @@
 # Merkle Validation Library
 
-This library provides tools, structures, and utilities for Merkle tree validation and operations.
+This library provides tools, structures, and utilities for Merkle tree validation and operations. I had a good time working on this, so hopefully talk soon. Most of the functions use Result or Option to improve error handling, and deviations from the assignment doc are pointed out if any. Thanks, Ayush.
 
 ## Getting Started
 
@@ -12,7 +12,7 @@ cargo install
 
 ### Documentation
 
-The best way to understand and utilize this library is by generating and viewing the local documentation:
+The best way to understand this library is by generating and viewing the local documentation:
 
 ```
 cargo doc --open
