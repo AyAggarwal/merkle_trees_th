@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use crate::errors::errors::MerkleError;
 use crate::utils::index::{left_child_index, parent_index};
 use hex;
