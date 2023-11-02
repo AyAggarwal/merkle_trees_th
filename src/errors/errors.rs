@@ -1,4 +1,4 @@
-use std::fmt::{self, write};
+use std::fmt::{self};
 
 use hex::FromHexError;
 
@@ -13,6 +13,7 @@ pub enum MerkleError {
     EncodeError(FromHexError),
     InvalidBytes,
     MaxDepthExceeded,
+    InvalidIndex,
 }
 
 impl fmt::Display for ValidationError {
@@ -30,6 +31,7 @@ impl fmt::Display for MerkleError {
             MerkleError::EncodeError(e) => write!(f, "{}", e),
             MerkleError::InvalidBytes => write!(f, "leaf must be 32 byte hex string"),
             MerkleError::MaxDepthExceeded => write!(f, "depth must be less than 30"),
+            MerkleError::InvalidIndex => write!(f, "index is out of bounds"),
         }
     }
 }

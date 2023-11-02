@@ -1,4 +1,5 @@
-use crate::errors::errors::MerkleError;
+use crate::utils::index;
+use crate::{errors::errors::MerkleError, utils::index::left_child_index};
 use hex;
 use sha3::{Digest, Sha3_256};
 pub struct MerkleTree {
@@ -66,9 +67,58 @@ impl MerkleTree {
         Ok(MerkleTree { nodes })
     }
 
+    pub fn set(&mut self, leaf_index: usize, value: &str) -> Result<(), MerkleError> {
+        let leaf_count = self.num_leaves();
+        if leaf_index >= leaf_count {
+            return Err(MerkleError::InvalidIndex);
+        }
+
+        let array_index = self.nodes.len() - leaf_count + leaf_index;
+
+        let string_to_decode;
+        if &value[..2] == "0x" {
+            string_to_decode = &value[2..];
+        } else {
+            string_to_decode = value;
+        }
+
+        let new_leaf_bytes;
+        match hex::decode(string_to_decode) {
+            Ok(bytes) => {
+                new_leaf_bytes = bytes;
+            }
+            Err(e) => return Err(MerkleError::EncodeError(e)),
+        }
+
+        let current_leaf: [u8; 32];
+        current_leaf = match new_leaf_bytes.try_into() {
+            Ok(bytes) => bytes,
+            Err(_) => return Err(MerkleError::InvalidBytes),
+        };
+
+        self.nodes[array_index] = current_leaf;
+
+        let mut hasher = Sha3_256::new();
+        let mut curr_index = index::parent_index(array_index);
+        while let Some(index) = curr_index {
+            let mut concatenated_hash = [0u8; 64];
+            concatenated_hash[..32].copy_from_slice(&self.nodes[left_child_index(index)]);
+            concatenated_hash[32..].copy_from_slice(&self.nodes[left_child_index(index) + 1]);
+            hasher.update(&concatenated_hash);
+            self.nodes[index] = hasher.finalize_reset().into();
+            curr_index = index::parent_index(index);
+            println!("INDEX {}", index);
+        }
+        Ok(())
+    }
+
     pub fn root(&self) -> String {
         let root = hex::encode(&self.nodes[0]);
         return format!("0x{}", root);
+    }
+
+    pub fn num_leaves(&self) -> usize {
+        return self.nodes.len() / 2 + 1;
     }
 }
 
@@ -102,4 +152,45 @@ fn test_merkle_tree_full() {
         tree.root(),
         "0xa2422433244a1da24b3c4db126dcc593666f98365403e6aaf07fae011c824f09"
     );
+}
+
+#[test]
+fn test_merkle_tree_set() {
+    let initial_leaf = "0xabababababababababababababababababababababababababababababababab";
+    let mut tree = MerkleTree::new(2, initial_leaf).unwrap();
+    assert_eq!(tree.nodes.len(), 3);
+    assert_eq!(
+        tree.root(),
+        "0x699fc94ff1ec83f1abf531030e324003e7758298281645245f7c698425a5e0e7"
+    );
+    tree.set(
+        0,
+        "0xabababababababababababababababababababababababababababababababcd",
+    )
+    .unwrap();
+    assert_eq!(
+        hex::encode(tree.nodes[1]),
+        "abababababababababababababababababababababababababababababababcd"
+    );
+    assert_eq!(
+        tree.root(),
+        "0x1e69d9c46ca7065c20d7a9bb407f574fd92fd862f69cb96e1146926c8f198e81"
+    )
+}
+
+#[test]
+fn test_merkle_tree_set_higher_depth() {
+    let initial_leaf = "0xabababababababababababababababababababababababababababababababcd";
+    let mut tree = MerkleTree::new(10, initial_leaf).unwrap();
+    for i in 0..tree.num_leaves() {
+        tree.set(
+            i,
+            "0xabababababababababababababababababababababababababababababababab",
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        tree.root(),
+        "0xc795494aa662dd012c5de6c52f0ab28ee9135fe846074d62bb7807cf98742fd9"
+    )
 }

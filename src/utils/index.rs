@@ -51,12 +51,12 @@ pub fn index_to_depth_offset(index: usize) -> (usize, usize) {
 /// # Returns
 ///
 /// * An integer representing the index of the parent node.
-pub fn parent_index(index: usize) -> usize {
+pub fn parent_index(index: usize) -> Option<usize> {
     // TODO: Implement the function.
     if index == 0 {
-        return 0;
+        return None;
     }
-    return (index - 1) / 2;
+    return Some((index - 1) / 2);
 }
 
 /// Given an index, returns the index of its left-most child.
@@ -105,13 +105,13 @@ mod tests {
 
     #[test]
     fn test_parent_index() {
-        assert_eq!(parent_index(0), 0);
-        assert_eq!(parent_index(1), 0);
-        assert_eq!(parent_index(2), 0);
-        assert_eq!(parent_index(5), 2);
-        assert_eq!(parent_index(3), 1);
-        assert_eq!(parent_index(7), 3);
-        assert_eq!(parent_index(14), 6);
+        assert_eq!(parent_index(0), None);
+        assert_eq!(parent_index(1), Some(0));
+        assert_eq!(parent_index(2), Some(0));
+        assert_eq!(parent_index(5), Some(2));
+        assert_eq!(parent_index(3), Some(1));
+        assert_eq!(parent_index(7), Some(3));
+        assert_eq!(parent_index(14), Some(6));
     }
 
     #[test]
