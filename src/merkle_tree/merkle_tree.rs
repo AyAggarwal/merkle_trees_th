@@ -4,6 +4,7 @@ use hex;
 use num_bigint::BigUint;
 use num_traits::FromPrimitive;
 use sha3::{Digest, Sha3_256};
+///backbone MerkleTree struct using Vec
 pub struct MerkleTree {
     nodes: Vec<String>,
 }
@@ -20,18 +21,31 @@ pub struct ProofStep {
 }
 
 impl MerkleTree {
+    /// returns the root of the tree
     pub fn root(&self) -> String {
         return self.nodes[0].clone();
     }
 
+    // returns the number of leaves in the tree
     pub fn num_leaves(&self) -> usize {
         return self.nodes.len() / 2 + 1;
     }
 
+    // bool indicating if the current index is the left child
     fn is_left_child(&self, index: usize) -> bool {
         index % 2 == 1
     }
 
+    /// Given `depth` (one indexed) and `initial_leaf`, constructs a merkle tree with leaf values as initial_leaf.
+    ///
+    /// # Arguments
+    ///
+    /// * `depth` - The depth of the tree. Ex: depth 20 creates tree with level 0 to level 19.
+    /// * `initial_leaf` - value to be assinged to the leaves. must be 32 bit hex string starting with '0x'
+    ///
+    /// # Returns
+    ///
+    /// * A new MerkleTree
     pub fn new(depth: usize, initial_leaf: &str) -> Result<Self, MerkleError> {
         if depth > 30 {
             return Err(MerkleError::MaxDepthExceeded);
@@ -89,6 +103,16 @@ impl MerkleTree {
         Ok(MerkleTree { nodes })
     }
 
+    /// Sets a new leaf value and re-calculates the merkle root.
+    ///
+    /// # Arguments
+    ///
+    /// * `leaf_index` - The 0 indexed leaf to set.
+    /// * `value` - The new value for the leaf. Must be 32 bit hex string starting with `0x`
+    ///
+    /// # Returns
+    ///
+    /// * Result indicating success or error
     pub fn set(&mut self, leaf_index: usize, value: &str) -> Result<(), MerkleError> {
         let leaf_count = self.num_leaves();
         if leaf_index >= leaf_count {
@@ -118,6 +142,16 @@ impl MerkleTree {
         Ok(())
     }
 
+    /// Constructs a proof out of `ProofStep` objects, which can be used verify the proof.
+    /// Records direction and sibling all the way to the root to prove inclusion of a leaf.
+    ///
+    /// # Arguments
+    ///
+    /// * `leaf_index` - 0 indexed leaf you want to construct a proof for.
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<ProofStep>` containing the proof steps to be verified.
     pub fn proof(&self, leaf_index: usize) -> Vec<ProofStep> {
         let mut proof_steps = Vec::new();
 
@@ -146,6 +180,16 @@ impl MerkleTree {
         proof_steps
     }
 
+    /// Given a `proof` and leaf_value, calculates and returns the root.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof` - `Vec<ProofStep>` containing the proof steps to be verified.
+    /// * `leaf_value` - The value of the leaf you want to verify proof for. Must be 32 bit hex string with `0x` prefix.
+    ///
+    /// # Returns
+    ///
+    /// * Result containing the root of the tree or Error.
     pub fn verify(proof: &Vec<ProofStep>, leaf_value: String) -> Result<String, MerkleError> {
         let mut hasher = Sha3_256::new();
         let mut current_value = leaf_value;
